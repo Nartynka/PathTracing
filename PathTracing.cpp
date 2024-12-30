@@ -68,6 +68,12 @@ Vec3 cross(const Vec3& a, const Vec3& b)
     return { a.y * b.z - a.z * b.y, a.x * b.z - a.z * b.x, a.x * b.y - a.y * b.x };
 }
 
+// vector and normal
+Vec3 reflect(const Vec3& v, const Vec3& n)
+{
+	return v - 2 * dot(v, n) * n;
+}
+
 
 struct Ray
 {
@@ -75,22 +81,32 @@ struct Ray
     Vec3 dir;
 };
 
-
 struct Sphere
 {
     float radius;
     Vec3 pos;
+    Vec3 color;
 };
 
+// infinite plane
+struct Plane
+{
+    Vec3 normal; // perpendicular to the surface
+    float distance; // distance from 0,0,0 (center of the screen) to plane along normal
+    Vec3 color;
+};
 
 struct Hit
 {
     Vec3 pos; // position of a hit, where the ray hit the object
     Vec3 normal; // vector perpendicular to the surface at the point of intersection
     float distance; // distance along ray to the hit position
+    Vec3 color;
 };
 
-bool intersect(const Ray& ray, const Sphere& sphere, Hit& out_hit)
+
+// Ray-Sphere intersection
+bool intersect(const Ray& ray, const Sphere& sphere, Hit& hit)
 {
     Vec3 between = sphere.pos - ray.pos;
 
@@ -106,24 +122,78 @@ bool intersect(const Ray& ray, const Sphere& sphere, Hit& out_hit)
         float t1 = dot(ray.dir, between);
         float t2 = sqrt(sphere.radius * sphere.radius - d * d);
 
-        out_hit.distance = t1 - t2;
+        hit.distance = t1 - t2;
         // the end of the vector between start of the ray and the hit position
-        out_hit.pos = ray.pos + ray.dir * out_hit.distance;
+        hit.pos = ray.pos + ray.dir * hit.distance;
         // vector from the sphere center to the hit position
-        out_hit.normal = norm(sphere.pos - out_hit.pos);
-
+        hit.normal = norm(sphere.pos - hit.pos);
+        hit.color = sphere.color;
         // if the ray is perfectly in opposite direction hit will still be detected so we have to check 
         // if the ray and the sphere are in the same directions
-        //if (dot(ray.dir, out_hit.normal) > 0.0f)
+        //if (dot(ray.dir, hit.normal) > 0.0f)
         //{
-        //    out_hit.normal = -1.0f * out_hit.normal;
+        //    hit.normal = -1.0f * hit.normal;
         //}
 
 		return true;
     }
 	return false;
+}
 
-    
+// Ray-Plane intersection
+bool intersect(const Ray& ray, const Plane& plane, Hit& hit)
+{
+    float denom = dot(ray.dir, plane.normal);
+
+    if (denom > 0.00001f)
+    {
+        hit.distance = -(dot(ray.pos, plane.normal) + plane.distance) / denom;
+        hit.pos = ray.pos + (ray.dir * hit.distance);
+        hit.normal = plane.normal;
+        hit.color = plane.color;
+
+        return true;
+    }
+
+    return false;
+}
+
+
+struct Scene
+{
+	Sphere s1;
+	Plane p1; // ground
+};
+
+
+bool intersect(const Ray& ray, const Scene& scene, Hit& hit)
+{
+    Hit temp_hit = {};
+    float max_distance = 100000.0f;
+    float is_hit = false;
+
+
+    if (intersect(ray, scene.s1, temp_hit))
+    {
+        if (temp_hit.distance < max_distance)
+        {
+            hit = temp_hit;
+            max_distance = temp_hit.distance;
+            is_hit = true;
+        }
+    }
+
+	if (intersect(ray, scene.p1, temp_hit))
+	{
+		if (temp_hit.distance < max_distance)
+		{
+			hit = temp_hit;
+			max_distance = temp_hit.distance;
+			is_hit = true;
+		}
+	}
+
+    return is_hit;
 }
 
 
@@ -140,20 +210,31 @@ Vec3 render(uint32_t x, uint32_t y, uint32_t width, uint32_t height)
         camera_pos.z + camera_near
     };
 
+
     Ray ray;
     ray.pos = pixel_pos;
     // point - point = vector between them
     ray.dir = norm(pixel_pos - camera_pos);
 
-    Sphere sphere;
-    sphere.pos = { 0.f, 0.f, 0.f };
-    sphere.radius = 0.5f;
+    // Scene
+    Scene scene;
+
+    scene.s1.pos = { 0.f, 0.0f, -4.f };
+    scene.s1.radius = 0.5f;
+    scene.s1.color = { 1.0f, 0.0f, 0.0f };
+
+    scene.p1.normal = { 0.0f, 1.0f, 0.0f };
+    // we lower the plane by sphere radius so that the sphere sits on it
+    scene.p1.distance = -0.5f;
+    scene.p1.color = { 0.5f, 0.5f, 0.5f };
 
     Hit hit;
-    if (intersect(ray, sphere, hit))
+
+    if (intersect(ray, scene, hit))
     {
         // hit.normal is in range <-1, 1> but we need <0, 1>
-        return (hit.normal + Vec3{1.0f, 1.0f, 1.0f}) * 0.5f;
+        //return (hit.normal + Vec3{1.0f, 1.0f, 1.0f}) * 0.5f;
+        return hit.color;
     }
 
 
