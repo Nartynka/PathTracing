@@ -36,6 +36,12 @@ Vec3 operator*(float s, const Vec3& a)
 	return { a.x * s, a.y * s, a.z * s };
 }
 
+// Component wise multiplying, color * vector
+Vec3 operator*(const Vec3& a, const Vec3& b)
+{
+	return { a.x * b.x, a.y * b.y, a.z * b.z };
+}
+
 float dot(const Vec3& a, const Vec3& b)
 {
 	return a.x * b.x + a.y * b.y + a.z * b.z;
@@ -110,16 +116,19 @@ bool intersect(const Ray& ray, const Sphere& sphere, Hit& hit)
 {
     Vec3 between = sphere.pos - ray.pos;
 
-    // ray vector projected on to the vector between the sphere and the ray
-    Vec3 projected = dot(between, ray.dir) * ray.dir;
-    float d = mag(cross(ray.dir, between));
     //float d = sqrt(mag(between) * mag(between) - mag(projected) * mag(projected));
     //std::cout << std::setprecision(20) << std::fixed << "cross: " << d << ", dot: " << x << std::endl;
 
+    // ray vector projected on to the vector between the sphere and the ray
+    Vec3 projected = dot(between, ray.dir) * ray.dir;
+    float d = mag(cross(ray.dir, between));
+    float t1 = dot(ray.dir, between);
+
     // Hit
-	if (d <= sphere.radius)
+    // first argument checks if the ray and the sphere is in the same directions
+    // second checks if we hit the sphere
+	if (t1 > 0.0f && d <= sphere.radius)
     {
-        float t1 = dot(ray.dir, between);
         float t2 = sqrt(sphere.radius * sphere.radius - d * d);
 
         hit.distance = t1 - t2;
@@ -128,12 +137,15 @@ bool intersect(const Ray& ray, const Sphere& sphere, Hit& hit)
         // vector from the sphere center to the hit position
         hit.normal = norm(sphere.pos - hit.pos);
         hit.color = sphere.color;
+        
+        // @TODO: ???
         // if the ray is perfectly in opposite direction hit will still be detected so we have to check 
         // if the ray and the sphere are in the same directions
         //if (dot(ray.dir, hit.normal) > 0.0f)
-        //{
-        //    hit.normal = -1.0f * hit.normal;
-        //}
+		//{
+		//	hit.normal = -1.0f * hit.normal;
+		//}
+        
 
 		return true;
     }
@@ -156,12 +168,14 @@ bool intersect(const Ray& ray, const Plane& plane, Hit& hit)
     }
 
     return false;
-}
+}   
 
 
 struct Scene
 {
 	Sphere s1;
+	Sphere s2;
+	Sphere s3;
 	Plane p1; // ground
 };
 
@@ -181,7 +195,27 @@ bool intersect(const Ray& ray, const Scene& scene, Hit& hit)
             max_distance = temp_hit.distance;
             is_hit = true;
         }
-    }
+    }    
+    
+	if (intersect(ray, scene.s2, temp_hit))
+	{
+		if (temp_hit.distance < max_distance)
+		{
+			hit = temp_hit;
+			max_distance = temp_hit.distance;
+			is_hit = true;
+		}
+	}
+    
+	if (intersect(ray, scene.s3, temp_hit))
+	{
+		if (temp_hit.distance < max_distance)
+		{
+			hit = temp_hit;
+			max_distance = temp_hit.distance;
+			is_hit = true;
+		}
+	}
 
 	if (intersect(ray, scene.p1, temp_hit))
 	{
@@ -196,8 +230,45 @@ bool intersect(const Ray& ray, const Scene& scene, Hit& hit)
     return is_hit;
 }
 
+// find color of single pixel based on what the ray hit
+Vec3 path_tracing(const Ray& ray, const Scene& scene, uint32_t bounces)
+{
+	Hit hit;
 
-Vec3 render(uint32_t x, uint32_t y, uint32_t width, uint32_t height)
+	if (intersect(ray, scene, hit))
+	{
+        if (bounces != 0)
+        {
+            bounces--;
+
+            Vec3 reflected = reflect(ray.dir, hit.normal);
+
+            Ray ray_bounce;
+            ray_bounce.pos = hit.pos;
+            ray_bounce.dir = reflected;
+
+            return hit.color * path_tracing(ray_bounce, scene, bounces);
+        }
+
+		// hit.normal is in range <-1, 1> but we need <0, 1>
+		//return (hit.normal + Vec3{1.0f, 1.0f, 1.0f}) * 0.5f;
+		return hit.color;
+	}
+
+    // Sky color
+	Vec3 white = { 1.0f, 1.0f, 1.0f };
+	Vec3 blue = { 0.4f, 0.7f, 1.0f };
+
+	// linear interpolation between white and blue
+	// we don't want t to be more than 1 or less than 0, so we have to saturate it!
+	float t = saturate(0.5f * (ray.dir.y + 1.0f));
+
+	return white * t + blue * (1.0f - t);
+    //path_tracing(reflect(ray, hit.normal), scene, bounces - 1);
+}
+
+// Create a ray from the pixel
+Vec3 render(const Scene& scene, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
 {
     Vec3 camera_pos = { 0.f, 0.f, -8.f };
     float camera_near = 2.f;
@@ -216,36 +287,7 @@ Vec3 render(uint32_t x, uint32_t y, uint32_t width, uint32_t height)
     // point - point = vector between them
     ray.dir = norm(pixel_pos - camera_pos);
 
-    // Scene
-    Scene scene;
-
-    scene.s1.pos = { 0.f, 0.0f, -4.f };
-    scene.s1.radius = 0.5f;
-    scene.s1.color = { 1.0f, 0.0f, 0.0f };
-
-    scene.p1.normal = { 0.0f, 1.0f, 0.0f };
-    // we lower the plane by sphere radius so that the sphere sits on it
-    scene.p1.distance = -0.5f;
-    scene.p1.color = { 0.5f, 0.5f, 0.5f };
-
-    Hit hit;
-
-    if (intersect(ray, scene, hit))
-    {
-        // hit.normal is in range <-1, 1> but we need <0, 1>
-        //return (hit.normal + Vec3{1.0f, 1.0f, 1.0f}) * 0.5f;
-        return hit.color;
-    }
-
-
-    Vec3 white = { 1.0f, 1.0f, 1.0f };
-    Vec3 blue = { 0.4f, 0.7f, 1.0f };
-
-    // linear interpolation between white and blue
-    // we don't want t to be more than 1 or less than 0, so we have to saturate it!
-    float t = saturate(0.5f * (ray.dir.y + 1.0f));
-
-    return white * t + blue * (1.0f - t);
+    return path_tracing(ray, scene, 16);
 }
 
 int main()
@@ -263,11 +305,35 @@ int main()
     // we will move by 3 (rgb = 3 values in range 0-255) every loop iteration
     uint8_t* pixel = (uint8_t*)image;
 
+	// Scene
+	Scene scene;
+
+	// minus is up/forward/direction to camera, plus is down/back/direction away from camera
+	// 0,0,0 is a center of the image
+	scene.s1.pos = { 0.f, 0.0f, -4.f };
+	scene.s1.radius = 0.5f;
+	scene.s1.color = { 1.0f, 0.3f, 0.3f };
+        
+    scene.s2.pos = { 1.f, 0.0f, -4.f };
+	scene.s2.radius = 0.5f;
+	scene.s2.color = { 0.3f, 1.0f, 0.4f };
+
+	scene.s3.pos = { -1.f, 0.0f, -4.f };
+	scene.s3.radius = 0.5f;
+	scene.s3.color = { 0.4f, 0.3f, 1.0f };
+
+	scene.p1.normal = { 0.0f, 1.0f, 0.0f };
+	// we lower the plane by sphere radius so that the sphere sits on it
+	scene.p1.distance = -0.5f;
+	scene.p1.color = { 0.5f, 0.5f, 0.5f };
+
+
 	for (uint32_t y = 0; y < height; ++y)
     {
 		for (uint32_t x = 0; x < width; ++x)
         {
-            Vec3 color = render(x, y, width, height);
+            // render of a single pixel
+            Vec3 color = render(scene, x, y, width, height);    
 
 			// Assign the pixel colors
 			pixel[0] = color.x * 255.f;
